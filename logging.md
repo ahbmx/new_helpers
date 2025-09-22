@@ -1,136 +1,122 @@
-Here’s a clean and scalable way to implement a reusable logging setup that meets all your requirements:
+Perfect — switching from `FileHandler` to `TimedRotatingFileHandler` will allow your log files to automatically rotate based on time (e.g., daily, hourly, etc.).
 
 ---
 
-### 🔧 **Project Structure (after update)**
+### ✅ Changes in This Version
 
-```
-main.py
-dvl/
-├── __init__.py
-├── configHelper.py       # Contains logging config values
-├── functionHelper.py
-├── ecsHelper.py
-├── loggerHelper.py       # Contains the logging setup function
-```
+* Uses `**TimedRotatingFileHandler**` to rotate logs.
+* Default rotation: **daily** (`when='midnight'`, keep last 7 days).
+* You can customize rotation parameters: `when`, `interval`, `backupCount`.
 
 ---
 
-### ✅ **Requirements Recap**
-
-* Logger setup **only once** and reused everywhere.
-* Support for:
-
-  * Console or rotating file handler (default: file logs for 7 days).
-  * Customizable log directory.
-  * Module name in formatter.
-  * Adjustable logging level.
-
----
-
-### 1️⃣ `dvl/configHelper.py` — Store configuration
+### 🧩 Updated `setup_logger` Function
 
 ```python
-# dvl/configHelper.py
-
-LOG_DIR = "logs"
-LOG_LEVEL = "DEBUG"  # Can be "INFO", "WARNING", etc.
-LOG_MODE = "file"    # or "console"
-LOG_RETENTION_DAYS = 7
-```
-
----
-
-### 2️⃣ `dvl/loggerHelper.py` — Logging initializer
-
-```python
-# dvl/loggerHelper.py
-
 import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
-from dvl import configHelper as config
 
-_loggers = {}
+def setup_logger(
+    name='my_logger',
+    log_dir=None,
+    log_file='app.log',
+    level='INFO',
+    when='midnight',
+    interval=1,
+    backup_count=7
+):
+    """
+    Sets up a logger with optional file logging and time-based rotation.
 
-def get_logger(name=None):
-    global _loggers
+    Parameters:
+        name (str): Logger name.
+        log_dir (str | None): Directory for the log file. If None, disables file logging.
+        log_file (str): Log file name (used only if log_dir is provided).
+        level (str): Logging level as string (e.g., 'DEBUG', 'INFO').
+        when (str): Time interval for rotation ('S', 'M', 'H', 'D', 'midnight', 'W0'-'W6').
+        interval (int): Interval at which to rotate the log.
+        backup_count (int): Number of old log files to keep.
 
-    if name in _loggers:
-        return _loggers[name]
+    Returns:
+        logging.Logger: Configured logger.
+    """
+    # Convert level string to logging constant
+    numeric_level = getattr(logging, level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {level}")
 
     logger = logging.getLogger(name)
-    if logger.handlers:
-        # Already configured (guard in case of reload)
-        _loggers[name] = logger
+    logger.setLevel(numeric_level)
+
+    # Prevent duplicate handlers if logger already configured
+    if logger.hasHandlers():
         return logger
 
-    logger.setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))
-    
-    formatter = logging.Formatter(
-        fmt='%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    # Formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-    if config.LOG_MODE == "console":
-        handler = logging.StreamHandler()
-    else:
-        os.makedirs(config.LOG_DIR, exist_ok=True)
-        log_path = os.path.join(config.LOG_DIR, "app.log")
-        handler = TimedRotatingFileHandler(
-            log_path, when='midnight', backupCount=config.LOG_RETENTION_DAYS
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(numeric_level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # File handler with timed rotation
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, log_file)
+
+        file_handler = TimedRotatingFileHandler(
+            filename=log_path,
+            when=when,
+            interval=interval,
+            backupCount=backup_count,
+            encoding='utf-8',
+            utc=True  # or False, depending on your timezone preference
         )
+        file_handler.setLevel(numeric_level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.propagate = False  # Prevent duplicate logs
-
-    _loggers[name] = logger
     return logger
 ```
 
 ---
 
-### 3️⃣ Usage in **any module** (e.g., `functionHelper.py`, `main.py`, etc.)
+### 🧪 Example Usage
 
 ```python
-# dvl/functionHelper.py
+if __name__ == '__main__':
+    # Daily rotation at midnight, keep 7 days of logs
+    logger = setup_logger(
+        name='my_rotating_logger',
+        log_dir='logs',
+        log_file='my_app.log',
+        level='debug',
+        when='midnight',
+        interval=1,
+        backup_count=7
+    )
 
-from dvl.loggerHelper import get_logger
-
-logger = get_logger(__name__)
-
-def some_function():
-    logger.info("Running some_function...")
-```
-
-```python
-# main.py
-
-from dvl.loggerHelper import get_logger
-
-logger = get_logger(__name__)
-
-def main():
-    logger.info("Application started")
-
-if __name__ == "__main__":
-    main()
+    logger.debug("Debug message")
+    logger.info("Info message")
+    logger.warning("Warning message")
 ```
 
 ---
 
-### 🔁 Behavior
+### ⏰ Rotation Options for `when`
 
-* `get_logger(__name__)` ensures each module gets a logger tagged with its name.
-* Logging is configured **once**, reused globally.
-* Log rotation and retention are handled automatically.
-* Easy to switch between **console** and **file logging** via `configHelper.py`.
+| Value         | Meaning                     |
+| ------------- | --------------------------- |
+| `'S'`         | Seconds                     |
+| `'M'`         | Minutes                     |
+| `'H'`         | Hours                       |
+| `'D'`         | Days                        |
+| `'midnight'`  | Daily at midnight           |
+| `'W0'`–`'W6'` | Weekly (0=Monday, 6=Sunday) |
 
 ---
 
-### 🧪 Optional: Add dynamic config override
-
-If you want to override config values programmatically (e.g., from CLI args), update `configHelper` before importing `get_logger()`.
-
-Let me know if you want to add CLI-based overrides or support for JSON/YAML config files.
+Let me know if you want compressed rotated files or more customization like separate logs per level (`info.log`, `error.log`, etc).
