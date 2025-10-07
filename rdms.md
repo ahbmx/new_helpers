@@ -213,3 +213,101 @@ esx02.lab.local           | naa.600508b1001c7f59...  | 600508b1001c7f59a3a13f7df
 
 ---
 
+Perfect ✅ — that’s a classic VMware inventory task.
+You want a Python script (using **pyVmomi**) that connects to **vCenter**, iterates through **clusters → hosts**, and extracts **HBA WWNs** from each ESXi host, printing them in two formats:
+
+* **With colons** → e.g. `50:06:0e:80:12:34:56:78`
+* **Without colons** → e.g. `50060e8012345678`
+
+---
+
+### 🧩 Prerequisites
+
+Install the vSphere SDK:
+
+```bash
+pip install pyvmomi
+```
+
+---
+
+### ✅ Script: `esx_host_wwns.py`
+
+```python
+from pyVim.connect import SmartConnect, Disconnect
+from pyVmomi import vim
+import ssl
+
+# --- vCenter connection info ---
+VCENTER = "vcenter.example.com"
+USERNAME = "administrator@vsphere.local"
+PASSWORD = "your_password"
+
+# --- Disable SSL warnings (optional) ---
+context = ssl._create_unverified_context()
+
+def format_wwn(wwn_str):
+    """
+    Format a WWN string with and without colons.
+    VMware returns WWN as a hexadecimal string (e.g. 50060e8012345678)
+    """
+    clean = wwn_str.replace(":", "").strip().lower()
+    with_colons = ":".join(clean[i:i+2] for i in range(0, len(clean), 2))
+    return with_colons, clean
+
+def main():
+    # Connect to vCenter
+    si = SmartConnect(host=VCENTER, user=USERNAME, pwd=PASSWORD, sslContext=context)
+    content = si.RetrieveContent()
+
+    print(f"{'Cluster':<25} | {'Host':<25} | {'WWN (with colons)':<25} | {'WWN (no colons)':<20}")
+    print("-" * 110)
+
+    for datacenter in content.rootFolder.childEntity:
+        hostFolder = datacenter.hostFolder
+        computeResourceList = hostFolder.childEntity
+
+        for computeResource in computeResourceList:
+            cluster_name = computeResource.name  # Works for clusters and standalone hosts
+
+            for host in computeResource.host:
+                storage_system = host.configManager.storageSystem
+                hbas = storage_system.storageDeviceInfo.hostBusAdapter
+
+                for hba in hbas:
+                    # Filter Fibre Channel adapters
+                    if isinstance(hba, vim.host.FibreChannelHba):
+                        wwn_hex = format(int(hba.portWorldWideName))
+                        wwn_str = "%016x" % wwn_hex  # Convert int to padded hex string
+                        wwn_colon, wwn_nocolon = format_wwn(wwn_str)
+                        print(f"{cluster_name:<25} | {host.name:<25} | {wwn_colon:<25} | {wwn_nocolon:<20}")
+
+    Disconnect(si)
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+### 🧾 Example Output
+
+```
+Cluster                  | Host                      | WWN (with colons)         | WWN (no colons)
+--------------------------------------------------------------------------------------------------------------
+Production-Cluster        | esx01.lab.local           | 50:06:0e:80:12:34:56:78   | 50060e8012345678
+Production-Cluster        | esx01.lab.local           | 50:06:0e:80:87:65:43:21   | 50060e8087654321
+DR-Cluster                | esx02.lab.local           | 10:00:00:90:fa:12:34:56   | 10000090fa123456
+```
+
+---
+
+### 🧠 Notes
+
+* The **WWN** comes from each `vim.host.FibreChannelHba.portWorldWideName` property.
+* The script handles multiple FC HBAs per host — you’ll get one line per WWN.
+* Works even if a host is standalone (cluster name will just be its compute resource name).
+
+---
+
+Would you like me to make this output go to a **CSV file** (e.g. `esx_host_wwns.csv`) for easy Excel use?
