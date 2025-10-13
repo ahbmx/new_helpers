@@ -1,275 +1,213 @@
-## 1. Python Script with Scheduling
+Perfecto ✅
+Te ayudaré a crear **un servicio persistente de Linux (systemd)** que ejecuta un script Python ubicado en `/opt/storage/collector/storage_collector.py`.
+El script usará `schedule`, soportará un **modo de prueba** mediante `argparse`, y generará **logs separados** para eventos normales y errores.
 
-Create a file called `scheduled_service.py`:
+---
+
+## 🧩 Estructura general
+
+```
+/opt/storage/collector/
+├── storage_collector.py
+├── logs/
+│   ├── storage_collector.log
+│   └── storage_collector_error.log
+└── storage_collector.service  (archivo systemd)
+```
+
+---
+
+## 🐍 1. Script principal: `storage_collector.py`
+
+Guárdalo en `/opt/storage/collector/storage_collector.py`
+y asegúrate de que tenga permisos de ejecución:
+
+```bash
+sudo chmod +x /opt/storage/collector/storage_collector.py
+```
+
+Aquí tienes el código completo:
 
 ```python
 #!/usr/bin/env python3
-import time
 import schedule
+import time
+import argparse
 import logging
 from datetime import datetime
 import sys
-import signal
-import daemon
-from daemon import pidfile
+import os
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/scheduled_service.log'),
-        logging.StreamHandler()
-    ]
-)
+# ========================
+# CONFIGURACIÓN DE LOGS
+# ========================
+LOG_DIR = "/opt/storage/collector/logs"
+os.makedirs(LOG_DIR, exist_ok=True)
 
-class ScheduledService:
-    def __init__(self):
-        self.running = True
-        
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logging.info("Received shutdown signal")
-        self.running = False
-        
-    def job1(self):
-        """Example function 1 - runs every hour"""
-        logging.info("Job 1 executed - This runs every hour")
-        # Add your actual task logic here
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"Job 1 completed at {current_time}")
-        
-    def job2(self):
-        """Example function 2 - runs daily at 2:30 AM"""
-        logging.info("Job 2 executed - This runs daily at 2:30 AM")
-        # Add your actual task logic here
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"Job 2 completed at {current_time}")
-        
-    def job3(self):
-        """Example function 3 - runs every 30 minutes"""
-        logging.info("Job 3 executed - This runs every 30 minutes")
-        # Add your actual task logic here
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"Job 3 completed at {current_time}")
-    
-    def setup_schedule(self):
-        """Setup the scheduling for all jobs"""
-        # Schedule job1 to run every hour
-        schedule.every().hour.do(self.job1)
-        
-        # Schedule job2 to run daily at 2:30 AM
-        schedule.every().day.at("02:30").do(self.job2)
-        
-        # Schedule job3 to run every 30 minutes
-        schedule.every(30).minutes.do(self.job3)
-        
-        # Add more schedules as needed
-        # schedule.every().monday.at("09:00").do(self.job4)
-        # schedule.every(10).minutes.do(self.job5)
-        
-        logging.info("Scheduled jobs setup completed")
-        
-    def run(self):
-        """Main execution loop"""
-        logging.info("Scheduled service started")
-        
-        # Setup signal handlers for graceful shutdown
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        signal.signal(signal.SIGINT, self.signal_handler)
-        
-        # Setup the schedule
-        self.setup_schedule()
-        
-        # Main loop
-        while self.running:
-            try:
-                schedule.run_pending()
-                time.sleep(60)  # Check every minute
-            except Exception as e:
-                logging.error(f"Error in main loop: {e}")
-                time.sleep(60)
-                
-        logging.info("Scheduled service stopped")
+info_log_file = os.path.join(LOG_DIR, "storage_collector.log")
+error_log_file = os.path.join(LOG_DIR, "storage_collector_error.log")
 
+# Logger general
+logger = logging.getLogger("storage_collector")
+logger.setLevel(logging.INFO)
+
+# Handler de información
+info_handler = logging.FileHandler(info_log_file)
+info_handler.setLevel(logging.INFO)
+
+# Handler de errores
+error_handler = logging.FileHandler(error_log_file)
+error_handler.setLevel(logging.ERROR)
+
+# Formatos
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+info_handler.setFormatter(formatter)
+error_handler.setFormatter(formatter)
+
+# Agregar handlers al logger
+logger.addHandler(info_handler)
+logger.addHandler(error_handler)
+
+# ========================
+# FUNCIONES DEL COLECTOR
+# ========================
+
+def collect_data():
+    """Ejemplo de tarea programada."""
+    logger.info("Iniciando tarea: colectar datos.")
+    try:
+        # Simula proceso
+        time.sleep(2)
+        logger.info("Datos recolectados exitosamente.")
+    except Exception as e:
+        logger.error(f"Error al recolectar datos: {e}")
+
+def clean_old_files():
+    """Ejemplo de otra tarea programada."""
+    logger.info("Iniciando tarea: limpieza de archivos antiguos.")
+    try:
+        # Simula proceso
+        time.sleep(1)
+        logger.info("Archivos antiguos eliminados.")
+    except Exception as e:
+        logger.error(f"Error durante la limpieza: {e}")
+
+# ========================
+# PROGRAMACIÓN DE TAREAS
+# ========================
+def schedule_jobs():
+    # Ejecutar cada 10 minutos
+    schedule.every(10).minutes.do(collect_data)
+
+    # Ejecutar todos los días a las 02:00 AM
+    schedule.every().day.at("02:00").do(clean_old_files)
+
+    logger.info("Tareas programadas correctamente.")
+
+# ========================
+# MAIN
+# ========================
 def main():
-    service = ScheduledService()
-    service.run()
+    parser = argparse.ArgumentParser(description="Storage Collector Service")
+    parser.add_argument(
+        "--test",
+        help="Modo de prueba: ejecuta las tareas inmediatamente",
+        action="store_true"
+    )
+    args = parser.parse_args()
+
+    if args.test:
+        logger.info("Modo de prueba activado.")
+        collect_data()
+        clean_old_files()
+        logger.info("Ejecución de prueba completada.")
+        sys.exit(0)
+
+    # Modo normal (servicio)
+    schedule_jobs()
+    logger.info("Iniciando bucle de ejecución...")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
 
 if __name__ == "__main__":
-    # Check if we should run as daemon
-    if len(sys.argv) > 1 and sys.argv[1] == "--daemon":
-        # Run as daemon
-        with daemon.DaemonContext(
-            pidfile=pidfile.TimeoutPIDLockFile('/var/run/scheduled_service.pid'),
-            signal_map={
-                signal.SIGTERM: lambda signum, frame: None,
-                signal.SIGINT: lambda signum, frame: None,
-            }
-        ):
-            main()
-    else:
-        # Run in foreground
-        main()
+    main()
 ```
 
-## 2. Systemd Service File
+---
 
-Create a systemd service file at `/etc/systemd/system/scheduled_service.service`:
+## 🧰 2. Crear el servicio systemd
+
+Crea el archivo del servicio:
+
+```bash
+sudo nano /etc/systemd/system/storage_collector.service
+```
+
+Contenido del archivo:
 
 ```ini
 [Unit]
-Description=Scheduled Python Service
+Description=Storage Collector Service
 After=network.target
 
 [Service]
 Type=simple
-User=root
-ExecStart=/usr/bin/python3 /path/to/your/scheduled_service.py --daemon
-WorkingDirectory=/path/to/your/
+ExecStart=/usr/bin/python3 /opt/storage/collector/storage_collector.py
 Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
+User=root
+WorkingDirectory=/opt/storage/collector
+StandardOutput=syslog
+StandardError=syslog
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-## 3. Installation Script
+---
 
-Create an installation script `install_service.sh`:
+## ⚙️ 3. Activar y habilitar el servicio
 
 ```bash
-#!/bin/bash
-
-# Installation script for scheduled service
-
-SERVICE_NAME="scheduled_service"
-SCRIPT_DIR="/opt/scheduled_service"
-SCRIPT_PATH="$SCRIPT_DIR/scheduled_service.py"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-
-echo "Installing Scheduled Python Service..."
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root"
-    exit 1
-fi
-
-# Create directory
-echo "Creating installation directory..."
-mkdir -p $SCRIPT_DIR
-
-# Copy script
-echo "Copying script..."
-cp scheduled_service.py $SCRIPT_PATH
-chmod +x $SCRIPT_PATH
-
-# Install required packages
-echo "Installing required Python packages..."
-pip3 install schedule python-daemon
-
-# Create service file
-echo "Creating systemd service file..."
-cat > $SERVICE_FILE << EOF
-[Unit]
-Description=Scheduled Python Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/bin/python3 $SCRIPT_PATH --daemon
-WorkingDirectory=$SCRIPT_DIR
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Create log directory and file
-echo "Setting up logging..."
-touch /var/log/scheduled_service.log
-chmod 644 /var/log/scheduled_service.log
-
-# Reload systemd and enable service
-echo "Enabling service..."
-systemctl daemon-reload
-systemctl enable $SERVICE_NAME
-
-echo "Installation complete!"
-echo "You can now start the service with: systemctl start $SERVICE_NAME"
-echo "View logs with: journalctl -u $SERVICE_NAME -f"
+sudo systemctl daemon-reload
+sudo systemctl enable storage_collector.service
+sudo systemctl start storage_collector.service
 ```
 
-## 4. Requirements File
+Verifica su estado:
 
-Create `requirements.txt`:
-
-```txt
-schedule==1.2.0
-python-daemon==3.0.1
-```
-
-## 5. Usage Instructions
-
-### Installation:
 ```bash
-# Make the installation script executable
-chmod +x install_service.sh
-
-# Run installation
-sudo ./install_service.sh
+sudo systemctl status storage_collector.service
 ```
 
-### Managing the Service:
+Ver logs del sistema:
+
 ```bash
-# Start the service
-sudo systemctl start scheduled_service
-
-# Stop the service
-sudo systemctl stop scheduled_service
-
-# Check status
-sudo systemctl status scheduled_service
-
-# View logs
-sudo journalctl -u scheduled_service -f
-
-# Enable to start on boot (already done by install script)
-sudo systemctl enable scheduled_service
+journalctl -u storage_collector.service -f
 ```
 
-### Manual Testing:
+Y logs del script:
+
 ```bash
-# Run in foreground for testing
-python3 scheduled_service.py
-
-# Run as daemon manually
-python3 scheduled_service.py --daemon
+tail -f /opt/storage/collector/logs/storage_collector.log
+tail -f /opt/storage/collector/logs/storage_collector_error.log
 ```
 
-## 6. Customization
+---
 
-To customize for your needs:
+## 🧪 4. Modo de prueba manual
 
-1. **Modify the jobs**: Replace `job1()`, `job2()`, `job3()` with your actual functions
-2. **Change schedules**: Modify the `setup_schedule()` method with your desired timing
-3. **Add error handling**: Enhance error handling in your specific functions
-4. **Modify logging**: Adjust log levels and formats as needed
+Puedes correr las tareas inmediatamente sin esperar la programación:
 
-## Key Features:
+```bash
+python3 /opt/storage/collector/storage_collector.py --test
+```
 
-- ✅ Runs as a system service
-- ✅ Persists across reboots
-- ✅ Proper logging to both file and journal
-- ✅ Graceful shutdown handling
-- ✅ Automatic restart on failure
-- ✅ Easy to customize schedules and functions
+Esto ejecutará las funciones una sola vez y saldrá.
 
-The service will automatically start on boot and restart if it fails, ensuring your scheduled functions run reliably.
+---
+
+¿Quieres que te agregue una tarea adicional de ejemplo (por ejemplo, subir datos a un servidor remoto o comprimir archivos)?
+Puedo incluirla con su programación en el mismo esquema.
