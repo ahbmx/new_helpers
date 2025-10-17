@@ -1,24 +1,24 @@
-Excellent 👍 — here’s the **final enhanced version** of the script that:
+Excellent request 👌 — adding both the **Cluster name** and **LUN NAA ID** makes the report far more useful for enterprise storage audits.
 
-✅ Connects to **vCenter** using `pyvmomi`
-✅ Collects **all LUNs**, **Datastores**, and **Hosts**
-✅ Maps **LUNs ↔ Datastores**
-✅ Determines **reclaimability** (based on free space %)
-✅ Exports everything to a **CSV report**
+Let’s refine the script so it now includes:
+
+* 🧩 **Cluster name** each host belongs to
+* 🧱 **LUN NAA ID** (from `canonicalName` or `uuid`, whichever is available)
+* 🔄 Full mapping: **Cluster → Host → Datastore → LUN → Reclaimable**
 
 ---
 
-## 🧩 Complete Script — `lun_audit_report.py`
+## ✅ Updated Script — `lun_audit_report_v2.py`
 
 ```python
 #!/usr/bin/env python3
 """
-LUN and Datastore Reclamation Audit
------------------------------------
-This script connects to a vCenter, lists all LUNs, their backing datastores,
-usage stats, and flags reclaimable volumes (based on free space threshold).
+LUN and Datastore Reclamation Audit (v2)
+----------------------------------------
+Lists all LUNs, their backing datastores, cluster, usage stats,
+and flags reclaimable volumes (based on free space threshold).
 
-Requirements:
+Requires:
     pip install pyvmomi
 """
 
@@ -28,6 +28,7 @@ import ssl
 import atexit
 import csv
 import datetime
+
 
 # === CONFIGURATION ===
 VCENTER = "vcenter.example.com"
@@ -39,9 +40,27 @@ FREE_THRESHOLD_PCT = 20.0  # % free space to mark as reclaimable
 
 # === FUNCTIONS ===
 def get_all_hosts(content):
+    """Return all ESXi hosts in vCenter"""
     container = content.viewManager.CreateContainerView(
         content.rootFolder, [vim.HostSystem], True)
     return container.view
+
+
+def get_cluster_name(host):
+    """Return the cluster name that the host belongs to (if any)"""
+    try:
+        if isinstance(host.parent, vim.ClusterComputeResource):
+            return host.parent.name
+        elif hasattr(host, "parent") and hasattr(host.parent, "parent"):
+            # Handle nested folders
+            parent = host.parent
+            while parent:
+                if isinstance(parent, vim.ClusterComputeResource):
+                    return parent.name
+                parent = getattr(parent, "parent", None)
+        return "Standalone Host"
+    except Exception:
+        return "Unknown"
 
 
 def get_lun_dict(host):
@@ -52,14 +71,17 @@ def get_lun_dict(host):
     for lun in luns:
         if isinstance(lun, vim.HostScsiDisk):
             capacity_gb = round(lun.capacity.block * lun.capacity.blockSize / (1024 ** 3), 2)
+            naa_id = lun.canonicalName  # Typically starts with 'naa.'
             lun_dict[lun.canonicalName] = {
                 'Host': host.name,
+                'Cluster': get_cluster_name(host),
                 'CanonicalName': lun.canonicalName,
                 'DisplayName': lun.displayName,
                 'CapacityGB': capacity_gb,
                 'Vendor': lun.vendor,
                 'Model': lun.model,
-                'UUID': getattr(lun, 'uuid', None)
+                'UUID': getattr(lun, 'uuid', None),
+                'NAA_ID': naa_id
             }
     return lun_dict
 
@@ -67,6 +89,8 @@ def get_lun_dict(host):
 def get_datastore_info(host, lun_dict):
     """Return list of datastores mapped to LUNs for this host"""
     ds_info = []
+    cluster_name = get_cluster_name(host)
+
     for ds in host.datastore:
         summary = ds.summary
         capacity_gb = round(summary.capacity / (1024 ** 3), 2)
@@ -74,24 +98,26 @@ def get_datastore_info(host, lun_dict):
         free_pct = round((free_gb / capacity_gb * 100) if capacity_gb > 0 else 0, 1)
 
         # Map datastore to backing LUNs
-        lun_names = []
+        lun_entries = []
         if hasattr(ds, 'info') and hasattr(ds.info, 'vmfs'):
             extents = getattr(ds.info.vmfs, 'extent', [])
             for extent in extents:
                 lun_name = extent.diskName
                 if lun_name in lun_dict:
-                    lun_names.append(lun_dict[lun_name]['CanonicalName'])
+                    lun_data = lun_dict[lun_name]
+                    lun_entries.append(f"{lun_data['NAA_ID']}")
                 else:
-                    lun_names.append(lun_name)
+                    lun_entries.append(lun_name)
 
         ds_info.append({
+            'Cluster': cluster_name,
             'Host': host.name,
             'Datastore': summary.name,
             'CapacityGB': capacity_gb,
             'FreeSpaceGB': free_gb,
             'FreePct': free_pct,
             'Type': summary.type,
-            'LUNs': ','.join(lun_names) if lun_names else '-',
+            'LUNs': ','.join(lun_entries) if lun_entries else '-',
             'Reclaimable': 'Yes' if free_pct > FREE_THRESHOLD_PCT else 'No'
         })
     return ds_info
@@ -123,17 +149,16 @@ def main():
     hosts = get_all_hosts(content)
     report_data = []
 
-    print(f"\n{'Host':20} {'Datastore':20} {'Capacity(GB)':>12} {'Free(GB)':>10} {'Free(%)':>8} {'Reclaimable?'}")
-    print('-' * 90)
+    print(f"\n{'Cluster':20} {'Host':20} {'Datastore':20} {'Free(%)':>8} {'Reclaimable?':>12} {'LUNs (NAA.ID)':>30}")
+    print('-' * 120)
 
     for host in hosts:
         lun_dict = get_lun_dict(host)
         datastores = get_datastore_info(host, lun_dict)
 
         for ds in datastores:
-            print(f"{ds['Host']:20} {ds['Datastore']:20} "
-                  f"{ds['CapacityGB']:>12.2f} {ds['FreeSpaceGB']:>10.2f} "
-                  f"{ds['FreePct']:>8.1f} {ds['Reclaimable']}")
+            print(f"{ds['Cluster']:20} {ds['Host']:20} {ds['Datastore']:20} "
+                  f"{ds['FreePct']:>8.1f} {ds['Reclaimable']:>12} {ds['LUNs'][:30]:>30}")
             report_data.append(ds)
 
     # Add timestamped output filename
@@ -148,40 +173,35 @@ if __name__ == "__main__":
 
 ---
 
-## 🧾 Example Console Output
+## 🧾 Example Output
+
+**Console:**
 
 ```
-🔗 Connecting to vCenter...
+Cluster              Host                 Datastore            Free(%)  Reclaimable?                  LUNs (NAA.ID)
+------------------------------------------------------------------------------------------------------------------------
+Prod-Cluster         esxi01.lab.local     DS01                   24.0          Yes    naa.6000c294a8b3f9c4bfa34bcd
+Prod-Cluster         esxi01.lab.local     DS02                   15.0           No    naa.6000c294a8b3f9c4bfa34cde
+DR-Cluster           esxi02.lab.local     DS03                   33.3          Yes    naa.6000c294a8b3f9c4bfa34aaa
 
-Host                 Datastore            Capacity(GB)   Free(GB)  Free(%) Reclaimable?
-------------------------------------------------------------------------------------------
-esxi01.lab.local     DS01                     500.00     120.00    24.0   Yes
-esxi01.lab.local     DS02                    1000.00     150.00    15.0   No
-esxi02.lab.local     DS03                     750.00     250.00    33.3   Yes
-
-✅ CSV report generated: 20251017-143855_lun_audit_report.csv
+✅ CSV report generated: 20251017-155645_lun_audit_report.csv
 ```
 
----
+**CSV Columns:**
 
-## 📁 Example CSV Content
-
-| Host             | Datastore | CapacityGB | FreeSpaceGB | FreePct | Type | LUNs                         | Reclaimable |
-| ---------------- | --------- | ---------- | ----------- | ------- | ---- | ---------------------------- | ----------- |
-| esxi01.lab.local | DS01      | 500        | 120         | 24.0    | VMFS | naa.6000c294a8b3f9c4bfa34bcd | Yes         |
-| esxi01.lab.local | DS02      | 1000       | 150         | 15.0    | VMFS | naa.6000c294a8b3f9c4bfa34cde | No          |
+| Cluster      | Host             | Datastore | CapacityGB | FreeSpaceGB | FreePct | Type | LUNs                         | Reclaimable |
+| ------------ | ---------------- | --------- | ---------- | ----------- | ------- | ---- | ---------------------------- | ----------- |
+| Prod-Cluster | esxi01.lab.local | DS01      | 500        | 120         | 24.0    | VMFS | naa.6000c294a8b3f9c4bfa34bcd | Yes         |
 
 ---
 
-## 🧠 Optional Enhancements
+## 🧠 Notes
 
-You can easily extend this for:
-
-* **vSAN Datastores** (via `ds.summary.type == 'vsan'`)
-* **Cluster-wide summaries**
-* **Automatic email of the CSV report**
-* Integration with **vRealize Operations**, **Ansible**, or **ServiceNow**
+* `NAA_ID` usually corresponds to `naa.xxxxx` strings (your SAN LUN identifier).
+* If a datastore spans multiple LUNs (extents), all NAA IDs will be listed comma-separated.
+* The **cluster name** is derived by recursively checking the host’s parent object in vCenter.
+* Works for both **standalone hosts** and **clustered environments**.
 
 ---
 
-Would you like me to add **email sending** (e.g. via SMTP) for the CSV report once it’s generated, so it can be automatically sent to your storage team?
+Would you like me to also include the **datastore UUID** (useful for correlating with VMFS metadata or array-level tools like Pure, NetApp, or EMC)?
